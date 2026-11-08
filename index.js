@@ -34,37 +34,49 @@ async function withPage(action) {
   }
 }
 
+const AVAILABILITY_URL = '/my-reservations/list-available';
+
 async function openReservations(page) {
   await page.goto(PARKLY_URL);
   await enableSemantics(page);
+  const availability = page.waitForResponse((response) => response.url().includes(AVAILABILITY_URL));
   await page.getByRole('button', { name: /^Reservations/ }).click();
   await page.getByRole('switch', { name: 'Show only available days' }).waitFor();
   await page.waitForLoadState('networkidle');
+  const { dates } = await (await availability).json();
+  return dates;
 }
 
-async function readReservations(page) {
+const osloDate = (offsetDays) =>
+  new Date(Date.now() + offsetDays * 86400000).toLocaleDateString('sv-SE', { timeZone: timezone });
+
+const firstService = (day) => day.services[0];
+
+async function readReservationCount(page) {
   const text = await page.locator('flt-semantics[role=group]').first().innerText();
-  const count = Number(text.match(/My reservations \((\d+)\)/)?.[1] ?? 0);
-  const todaySection = text.split(/Today\n/)[1]?.split(/\n.*Tomorrow/)[0] ?? '';
-  return { count, todayAvailable: /\d+ available/.test(todaySection) };
+  return Number(text.match(/My reservations \((\d+)\)/)?.[1] ?? 0);
 }
 
-async function tryBook(page) {
-  const { count } = await readReservations(page);
-  await page.getByRole('button', { name: /available/ }).first().click();
+async function tryBook(page, cardIndex) {
+  const count = await readReservationCount(page);
+  await page.getByRole('button', { name: /Avtaleparkering/ }).nth(cardIndex).click();
   await page
     .locator('flt-semantics[role=group]', { hasText: `My reservations (${count + 1})` })
     .waitFor({ timeout: 10000 });
-  return true;
 }
 
 async function bookingFlow(page) {
-  await openReservations(page);
-  const { count, todayAvailable } = await readReservations(page);
-  if (count > 0) return 'already booked';
-  if (!todayAvailable) return 'not available';
-  await tryBook(page);
-  return 'booked';
+  const dates = await openReservations(page);
+  const targetDate = osloDate(1);
+  const targetIndex = dates.findIndex((day) => day.date === targetDate);
+  if (targetIndex === -1) return `${targetDate} not listed`;
+  const { status, availableSpaces } = firstService(dates[targetIndex]);
+  log(`${targetDate}: status=${status}, availableSpaces=${availableSpaces}`);
+  if (status !== 'NoReservation' && status !== 'AtCapacity') return `already booked ${targetDate}`;
+  if (availableSpaces < 1) return `not available ${targetDate}`;
+  const cardIndex = dates.slice(0, targetIndex).filter((day) => firstService(day).availableSpaces > 0).length;
+  await tryBook(page, cardIndex);
+  return `booked ${targetDate}`;
 }
 
 async function bookIfNeeded(page) {
@@ -79,15 +91,17 @@ async function bookIfNeeded(page) {
   return 'booking failed';
 }
 
-const isWeekendInOslo = () =>
-  ['Sat', 'Sun'].includes(new Date().toLocaleDateString('en-US', { weekday: 'short', timeZone: timezone }));
+const isTomorrowWeekendInOslo = () =>
+  ['Sat', 'Sun'].includes(
+    new Date(Date.now() + 86400000).toLocaleDateString('en-US', { weekday: 'short', timeZone: timezone }),
+  );
 
 const isBeforeOpeningInOslo = () =>
   Number(new Date().toLocaleString('en-US', { hour: 'numeric', hourCycle: 'h23', timeZone: timezone })) < 13;
 
 async function runBookJob() {
   const forced = process.argv.includes('--force');
-  if (isWeekendInOslo() && !forced) return log('weekend, skipping');
+  if (isTomorrowWeekendInOslo() && !forced) return log('tomorrow is weekend, skipping');
   if (isBeforeOpeningInOslo() && !forced) return log('before 13:00, skipping');
   log('bookIfNeeded started');
   const result = await withPage(bookIfNeeded).catch((error) => `failed: ${error.message.split('\n')[0]}`);
@@ -100,7 +114,7 @@ if (process.argv.includes('--run')) {
   process.exit(0);
 }
 
-const task = cron.schedule('0 13-23 * * 1-5', async () => {
+const task = cron.schedule('0 13-23 * * 0-4', async () => {
   await runBookJob();
   log('next scheduled try:', task.getNextRun()?.toLocaleString('nb-NO', { timeZone: timezone }));
 }, { timezone });
