@@ -1,0 +1,11 @@
+{
+  "name": "parkly-booker",
+  "type": "module",
+  "scripts": {
+    "start": "node --env-file=.env index.js"
+  },
+  "dependencies": {
+    "node-cron": "^4.6.0",
+    "playwright": "^1.65.0"
+  }
+}

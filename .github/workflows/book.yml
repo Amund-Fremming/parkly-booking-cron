@@ -1,0 +1,24 @@
+name: Book parking
+
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+jobs:
+  book:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: node index.js --run
+        env:
+          PARKLY_URL: ${{ secrets.PARKLY_URL }}
+          PARKLY_EMAIL: ${{ secrets.PARKLY_EMAIL }}
+          PARKLY_PASSWORD: ${{ secrets.PARKLY_PASSWORD }}
