@@ -2,8 +2,13 @@ name: Book parking
 
 on:
   schedule:
-    - cron: '0 * * * *'
+    - cron: "0 * * * *"
   workflow_dispatch:
+    inputs:
+      force:
+        description: Ignore weekend and 13:00 rules
+        type: boolean
+        default: false
 
 jobs:
   book:
@@ -17,7 +22,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - run: node index.js --run
+      - run: node index.js --run ${{ inputs.force && '--force' || '' }}
         env:
           PARKLY_URL: ${{ secrets.PARKLY_URL }}
           PARKLY_EMAIL: ${{ secrets.PARKLY_EMAIL }}
