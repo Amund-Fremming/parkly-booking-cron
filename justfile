@@ -1,8 +1,5 @@
-start:
-    npm start
-
 book:
-    npm start -- --run --force
+    npm start -- --force
 
 gh-book:
     gh workflow run book.yml -f force=true

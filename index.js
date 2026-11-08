@@ -1,5 +1,4 @@
 import { chromium } from 'playwright';
-import cron from 'node-cron';
 
 const { PARKLY_URL, PARKLY_EMAIL, PARKLY_PASSWORD } = process.env;
 const MAX_ATTEMPTS = 3;
@@ -109,14 +108,4 @@ async function runBookJob() {
   return result;
 }
 
-if (process.argv.includes('--run')) {
-  await runBookJob();
-  process.exit(0);
-}
-
-const task = cron.schedule('0 13-23 * * 0-4', async () => {
-  await runBookJob();
-  log('next scheduled try:', task.getNextRun()?.toLocaleString('nb-NO', { timeZone: timezone }));
-}, { timezone });
-
-log('scheduler started, next scheduled try:', task.getNextRun()?.toLocaleString('nb-NO', { timeZone: timezone }));
+await runBookJob();

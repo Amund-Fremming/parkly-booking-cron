@@ -1,8 +1,6 @@
 name: Book parking
 
 on:
-  schedule:
-    - cron: "0 * * * *"
   workflow_dispatch:
     inputs:
       force:
@@ -22,7 +20,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - run: node index.js --run ${{ inputs.force && '--force' || '' }}
+      - run: node index.js ${{ inputs.force && '--force' || '' }}
         env:
           PARKLY_URL: ${{ secrets.PARKLY_URL }}
           PARKLY_EMAIL: ${{ secrets.PARKLY_EMAIL }}
