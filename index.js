@@ -1,7 +1,11 @@
 import { chromium } from 'playwright';
 
 const { PARKLY_URL, PARKLY_EMAIL, PARKLY_PASSWORD } = process.env;
-const RETRY_DELAYS_MS = [500, 500, 2000, 4000, 8000, 16000];
+const BURST_DELAYS_MS = [0, 0, 0, 1000, 1000, 1000];
+const CONFIRM_TIMEOUT_MS = 1000;
+const BACKOFF_START_MS = 30000;
+const BACKOFF_MAX_MS = 10 * 60000;
+const POLL_WINDOW_MS = 5.5 * 3600000;
 const EARLY_START_MS = 15 * 60000;
 const timezone = 'Europe/Oslo';
 
@@ -62,7 +66,7 @@ async function tryBook(page, cardIndex) {
   await page.getByRole('button', { name: /Avtaleparkering/ }).nth(cardIndex).click();
   await page
     .locator('flt-semantics[role=group]', { hasText: `My reservations (${count + 1})` })
-    .waitFor({ timeout: 10000 });
+    .waitFor({ timeout: CONFIRM_TIMEOUT_MS });
 }
 
 async function bookingFlow(page) {
@@ -90,18 +94,33 @@ function msUntilOpeningInOslo() {
   return ((13 * 60 - hours * 60 - minutes) * 60 - seconds) * 1000 - now.getMilliseconds();
 }
 
+const isDone = (result) => result.startsWith('booked') || result.startsWith('already booked');
+
+const failed = (error) => `failed: ${error.message.split('\n')[0]}`;
+
 async function bookWithRetries(page) {
-  const attempts = RETRY_DELAYS_MS.length + 1;
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    log(`booking attempt ${attempt}/${attempts}`);
-    try {
-      return await bookingFlow(page);
-    } catch (error) {
-      log(`attempt ${attempt} failed:`, error.message.split('\n')[0]);
-    }
-    await sleep(RETRY_DELAYS_MS[attempt - 1] ?? 0);
+  let result = 'booking failed';
+  for (const [index, delay] of BURST_DELAYS_MS.entries()) {
+    await sleep(delay);
+    const attempt = index + 1;
+    log(`booking attempt ${attempt}/${BURST_DELAYS_MS.length}`);
+    result = await bookingFlow(page).catch(failed);
+    if (isDone(result)) return result;
+    log(`attempt ${attempt}: ${result}`);
   }
-  return 'booking failed';
+  return result;
+}
+
+async function pollUntilBooked(deadline) {
+  let result = 'booking failed';
+  for (let delay = BACKOFF_START_MS; Date.now() + delay < deadline; delay = Math.min(delay * 2, BACKOFF_MAX_MS)) {
+    log(`retrying in ${delay / 1000}s`);
+    await sleep(delay);
+    result = await withPage(bookingFlow).catch(failed);
+    log('poll result:', result);
+    if (isDone(result)) return result;
+  }
+  return result;
 }
 
 const bookIfNeeded = (waitMs) => async (page) => {
@@ -122,9 +141,12 @@ async function runBookJob() {
   const waitMs = forced ? 0 : Math.max(0, msUntilOpeningInOslo());
   if (waitMs > EARLY_START_MS) return log('more than 15 min before 13:00, skipping');
   log('bookIfNeeded started');
-  const result = await withPage(bookIfNeeded(waitMs)).catch((error) => `failed: ${error.message.split('\n')[0]}`);
+  const result = await withPage(bookIfNeeded(waitMs)).catch(failed);
   log('bookIfNeeded result:', result);
-  return result;
+  if (isDone(result) || forced) return result;
+  const finalResult = await pollUntilBooked(Date.now() + POLL_WINDOW_MS);
+  log('final result:', finalResult);
+  return finalResult;
 }
 
 await runBookJob();

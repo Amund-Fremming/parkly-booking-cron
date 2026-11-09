@@ -8,8 +8,9 @@ Books tomorrow's Parkly "Avtaleparkering" spot.
 2. Workflow runs `node index.js`.
 3. Skips if today or tomorrow is Sat/Sun or it's more than 15 min before 13:00 (Oslo).
 4. Logs in, waits until 13:00 → Reservations → reads tomorrow's status from the availability API.
-5. Already booked → done. Full → done, next trigger tries again. Available → clicks it.
-6. Any failure (incl. tomorrow not listed yet) → restart from Home; 6 retries: 2 fast (0.5s), then 2s/4s/8s/16s.
+5. Already booked → done. Available → clicks it, waits max 1s for confirmation.
+6. Not booked (full or failure) → restart from Home; 3 immediate attempts, then 3 more 1s apart.
+7. Still not booked → re-login and retry with backoff 30s/1m/2m/4m/8m, then every 10 min, for 5.5h (job limit 6h). Skipped with `--force`.
 
 ## Commands
 
