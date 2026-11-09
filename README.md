@@ -4,12 +4,12 @@ Books tomorrow's Parkly "Avtaleparkering" spot.
 
 ## Flow
 
-1. cron-job.org calls the GitHub API every 15 min → triggers the `Book parking` workflow.
+1. cron-job.org calls the GitHub API at ~12:50 Oslo → triggers the `Book parking` workflow.
 2. Workflow runs `node index.js`.
-3. Skips if tomorrow is Sat/Sun or it's before 13:00 (Oslo).
-4. Logs in → Reservations → reads tomorrow's status from the availability API.
+3. Skips if today or tomorrow is Sat/Sun or it's more than 15 min before 13:00 (Oslo).
+4. Logs in, waits until 13:00 → Reservations → reads tomorrow's status from the availability API.
 5. Already booked → done. Full → done, next trigger tries again. Available → clicks it.
-6. Any failure → back to Home and restart, max 3 attempts.
+6. Any failure (incl. tomorrow not listed yet) → restart from Home; 6 retries: 2 fast (0.5s), then 2s/4s/8s/16s.
 
 ## Commands
 

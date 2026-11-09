@@ -1,7 +1,8 @@
 import { chromium } from 'playwright';
 
 const { PARKLY_URL, PARKLY_EMAIL, PARKLY_PASSWORD } = process.env;
-const MAX_ATTEMPTS = 3;
+const RETRY_DELAYS_MS = [500, 500, 2000, 4000, 8000, 16000];
+const EARLY_START_MS = 15 * 60000;
 const timezone = 'Europe/Oslo';
 
 const log = (...args) => console.log(new Date().toISOString(), ...args);
@@ -68,7 +69,7 @@ async function bookingFlow(page) {
   const dates = await openReservations(page);
   const targetDate = osloDate(1);
   const targetIndex = dates.findIndex((day) => day.date === targetDate);
-  if (targetIndex === -1) return `${targetDate} not listed`;
+  if (targetIndex === -1) throw new Error(`${targetDate} not listed`);
   const { status, availableSpaces } = firstService(dates[targetIndex]);
   log(`${targetDate}: status=${status}, availableSpaces=${availableSpaces}`);
   if (status !== 'NoReservation' && status !== 'AtCapacity') return `already booked ${targetDate}`;
@@ -78,32 +79,50 @@ async function bookingFlow(page) {
   return `booked ${targetDate}`;
 }
 
-async function bookIfNeeded(page) {
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    log(`booking attempt ${attempt}/${MAX_ATTEMPTS}`);
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function msUntilOpeningInOslo() {
+  const now = new Date();
+  const [hours, minutes, seconds] = now
+    .toLocaleTimeString('en-GB', { hour12: false, timeZone: timezone })
+    .split(':')
+    .map(Number);
+  return ((13 * 60 - hours * 60 - minutes) * 60 - seconds) * 1000 - now.getMilliseconds();
+}
+
+async function bookWithRetries(page) {
+  const attempts = RETRY_DELAYS_MS.length + 1;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    log(`booking attempt ${attempt}/${attempts}`);
     try {
       return await bookingFlow(page);
     } catch (error) {
-      log(`attempt ${attempt} failed, restarting from home:`, error.message.split('\n')[0]);
+      log(`attempt ${attempt} failed:`, error.message.split('\n')[0]);
     }
+    await sleep(RETRY_DELAYS_MS[attempt - 1] ?? 0);
   }
   return 'booking failed';
 }
 
-const isTomorrowWeekendInOslo = () =>
-  ['Sat', 'Sun'].includes(
-    new Date(Date.now() + 86400000).toLocaleDateString('en-US', { weekday: 'short', timeZone: timezone }),
-  );
+const bookIfNeeded = (waitMs) => async (page) => {
+  log(`logged in, waiting ${Math.round(waitMs / 1000)}s until 13:00`);
+  await sleep(waitMs);
+  return bookWithRetries(page);
+};
 
-const isBeforeOpeningInOslo = () =>
-  Number(new Date().toLocaleString('en-US', { hour: 'numeric', hourCycle: 'h23', timeZone: timezone })) < 13;
+const isWeekendInOslo = (offsetDays) =>
+  ['Sat', 'Sun'].includes(
+    new Date(Date.now() + offsetDays * 86400000).toLocaleDateString('en-US', { weekday: 'short', timeZone: timezone }),
+  );
 
 async function runBookJob() {
   const forced = process.argv.includes('--force');
-  if (isTomorrowWeekendInOslo() && !forced) return log('tomorrow is weekend, skipping');
-  if (isBeforeOpeningInOslo() && !forced) return log('before 13:00, skipping');
+  if (isWeekendInOslo(0) && !forced) return log('today is weekend, skipping');
+  if (isWeekendInOslo(1) && !forced) return log('tomorrow is weekend, skipping');
+  const waitMs = forced ? 0 : Math.max(0, msUntilOpeningInOslo());
+  if (waitMs > EARLY_START_MS) return log('more than 15 min before 13:00, skipping');
   log('bookIfNeeded started');
-  const result = await withPage(bookIfNeeded).catch((error) => `failed: ${error.message.split('\n')[0]}`);
+  const result = await withPage(bookIfNeeded(waitMs)).catch((error) => `failed: ${error.message.split('\n')[0]}`);
   log('bookIfNeeded result:', result);
   return result;
 }
