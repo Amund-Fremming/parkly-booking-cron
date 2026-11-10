@@ -1,7 +1,7 @@
 import { chromium } from 'playwright';
 
 const { PARKLY_URL, PARKLY_EMAIL, PARKLY_PASSWORD } = process.env;
-const BURST_DELAYS_MS = [0, 0, 0, 1000, 1000, 1000];
+const BURST_DELAYS_MS = [0, 0, 0];
 const CONFIRM_TIMEOUT_MS = 1000;
 const BACKOFF_START_MS = 30000;
 const BACKOFF_MAX_MS = 10 * 60000;
@@ -9,7 +9,9 @@ const POLL_WINDOW_MS = 5.5 * 3600000;
 const EARLY_START_MS = 15 * 60000;
 const timezone = 'Europe/Oslo';
 
-const log = (...args) => console.log(new Date().toISOString(), ...args);
+const osloTimestamp = () =>
+  new Date().toLocaleString('sv-SE', { timeZone: timezone, dateStyle: 'short', timeStyle: 'medium' });
+const log = (...args) => console.log(osloTimestamp(), ...args);
 
 async function enableSemantics(page) {
   await page.locator('flt-semantics-placeholder').dispatchEvent('click');
@@ -123,7 +125,8 @@ async function pollUntilBooked(deadline) {
   return result;
 }
 
-const bookIfNeeded = (waitMs) => async (page) => {
+const bookIfNeeded = (openingAt) => async (page) => {
+  const waitMs = Math.max(0, openingAt - Date.now());
   log(`logged in, waiting ${Math.round(waitMs / 1000)}s until 13:00`);
   await sleep(waitMs);
   return bookWithRetries(page);
@@ -141,7 +144,7 @@ async function runBookJob() {
   const waitMs = forced ? 0 : Math.max(0, msUntilOpeningInOslo());
   if (waitMs > EARLY_START_MS) return log('more than 15 min before 13:00, skipping');
   log('bookIfNeeded started');
-  const result = await withPage(bookIfNeeded(waitMs)).catch(failed);
+  const result = await withPage(bookIfNeeded(Date.now() + waitMs)).catch(failed);
   log('bookIfNeeded result:', result);
   if (isDone(result) || forced) return result;
   const finalResult = await pollUntilBooked(Date.now() + POLL_WINDOW_MS);
